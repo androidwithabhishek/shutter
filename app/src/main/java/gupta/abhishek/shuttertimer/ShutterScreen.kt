@@ -1,10 +1,5 @@
 package gupta.abhishek.shuttertimer
 
-
-
-
-
-
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.background
@@ -97,14 +92,14 @@ fun ShutterScreen(viewModel: ShutterViewModel, modifier: Modifier = Modifier) {
         // Defaults below are the same values the camera panel uses.
         Label("Timer before first photo")
         GlassRow(
-            options = listOf("⏱ Off" to 0, "3S" to 3, "6S" to 6, "10S" to 10),
+            options = listOf("⏱ Off" to 0, "3S" to 3, "5S" to 5, "10S" to 10, "15S" to 15),
             selected = state.countdownSec,
             onSelect = viewModel::setCountdown
         )
 
         Label("Gap between photos")
         GlassRow(
-            options = listOf("2S" to 2, "3S" to 3, "5S" to 5),
+            options = listOf("1S" to 1, "3S" to 3, "5S" to 5, "10S" to 10),
             selected = state.intervalSec,
             onSelect = viewModel::setInterval
         )

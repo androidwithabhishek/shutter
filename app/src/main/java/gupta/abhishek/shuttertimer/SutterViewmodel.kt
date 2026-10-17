@@ -1,6 +1,6 @@
 package gupta.abhishek.shuttertimer
 
-import gupta.abhishek.shuttertimer.core.ShutterPrefs
+
 
 
 

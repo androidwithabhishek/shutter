@@ -11,7 +11,8 @@ object ShutterTheme {
     var glass = 0xB32C2C2E.toInt()         // translucent dark "glass" pill background
     var glassStroke = 0x33FFFFFF           // thin light border that gives the glass edge
     var textPrimary = 0xFFFFFFFF.toInt()
-    var textDim = 0x99FFFFFF.toInt()       // labels and disabled text
+    var textDim = 0x99FFFFFF.toInt()       // disabled text
+    var divider = 0x66FFFFFF               // thin line between a row's label and its options
     var warning = 0xFFFF9F0A.toInt()       // "set your shutter" reminder
     var shutterDot = 0x99FFD60A.toInt()        // dull yellow circle on the saved shutter position (panel open)
     var shutterDotSetting = 0xFFB8960C.toInt() // darker yellow circle while the position is being set

@@ -1,7 +1,4 @@
-package gupta.abhishek.shuttertimer.core
-
-
-
+package gupta.abhishek.shuttertimer
 
 import android.content.Context
 
@@ -14,16 +11,22 @@ class ShutterPrefs(context: Context) {
         .getSharedPreferences("shutter_prefs", Context.MODE_PRIVATE)
 
     var countdownSec: Int                       // 0 = no countdown
-        get() = sp.getInt("countdown", 3)
+        get() = sp.getInt("countdown", 3).takeIf { it in COUNTDOWNS } ?: 3
         set(v) = sp.edit().putInt("countdown", v).apply()
 
     var intervalSec: Int
-        get() = sp.getInt("interval", 2)
+        get() = sp.getInt("interval", 3).takeIf { it in INTERVALS } ?: 3
         set(v) = sp.edit().putInt("interval", v).apply()
 
     var photoCount: Int
         get() = sp.getInt("count", 3)
         set(v) = sp.edit().putInt("count", v).apply()
+
+    private companion object {
+        // Values offered in the UI; a value saved earlier that isn't listed falls back to the default
+        val COUNTDOWNS = setOf(0, 3, 5, 10, 15)
+        val INTERVALS = setOf(1, 3, 5, 10)
+    }
 
     var soundOn: Boolean
         get() = sp.getBoolean("sound", true)

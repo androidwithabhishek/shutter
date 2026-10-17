@@ -1,8 +1,7 @@
-package gupta.abhishek.shuttertimer
+package gupta.abhishek.shuttertimer.core
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Path
@@ -27,7 +26,9 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import gupta.abhishek.shuttertimer.core.ShutterPrefs
+import gupta.abhishek.shuttertimer.ShutterPrefs
+import gupta.abhishek.shuttertimer.ShutterTheme
+
 import kotlin.math.abs
 
 /**
@@ -99,7 +100,7 @@ class ShutterAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        wm = getSystemService(WINDOW_SERVICE) as WindowManager
         loadCameraPackages()
     }
 
@@ -201,10 +202,11 @@ class ShutterAccessibilityService : AccessibilityService() {
         selected: Boolean = false,
         weighted: Boolean = true,
         color: Int = ShutterTheme.textPrimary,
+        textSp: Float = 15f,
         onClick: (() -> Unit)? = null
     ) = TextView(this).apply {
         this.text = text
-        textSize = 15f
+        textSize = textSp
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         setTextColor(if (selected) ShutterTheme.onAccent else color)
@@ -233,14 +235,22 @@ class ShutterAccessibilityService : AccessibilityService() {
         children.forEach { addView(it) }
     }
 
+    /** Thin vertical line between a row's label and its options. */
+    private fun divider() = View(this).apply {
+        setBackgroundColor(ShutterTheme.divider)
+        layoutParams = LinearLayout.LayoutParams(dp(1), dp(20)).apply {
+            setMargins(dp(4), 0, dp(4), 0)
+        }
+    }
+
+    /** One panel row: [lead] | divider | selectable options. */
     private fun optionRow(
-        label: String?,
+        lead: View,
         options: List<Pair<String, Int>>,
         selected: Int,
         onSelect: (Int) -> Unit
     ): View {
-        val cells = mutableListOf<View>()
-        if (label != null) cells += cell(label, color = ShutterTheme.textDim)
+        val cells = mutableListOf(lead, divider())
         options.forEach { (text, value) ->
             cells += cell(text, selected = value == selected) {
                 onSelect(value)
@@ -351,9 +361,25 @@ class ShutterAccessibilityService : AccessibilityService() {
                 makeDraggable(grabber)
                 root.addView(grabber)
 
-                root.addView(optionRow(null, listOf("⏱" to 0, "3S" to 3, "6S" to 6, "10S" to 10), prefs.countdownSec) { prefs.countdownSec = it })
-                root.addView(optionRow("Gap", listOf("2S" to 2, "3S" to 3, "5S" to 5), prefs.intervalSec) { prefs.intervalSec = it })
-                root.addView(optionRow("Shots", listOf("1" to 1, "3" to 3, "6" to 6, "10" to 10), prefs.photoCount) { prefs.photoCount = it })
+                // Timer row: the (bigger) clock icon means "no countdown"; numbers are seconds
+                root.addView(optionRow(
+                    cell("⏱", selected = prefs.countdownSec == 0, textSp = 22f) {
+                        prefs.countdownSec = 0
+                        render()
+                    },
+                    listOf("3S" to 3, "5S" to 5, "10S" to 10, "15S" to 15),
+                    prefs.countdownSec
+                ) { prefs.countdownSec = it })
+                root.addView(optionRow(
+                    cell("Gap", color = ShutterTheme.textPrimary),
+                    listOf("1S" to 1, "3S" to 3, "5S" to 5, "10S" to 10),
+                    prefs.intervalSec
+                ) { prefs.intervalSec = it })
+                root.addView(optionRow(
+                    cell("Shots", color = ShutterTheme.textPrimary),
+                    listOf("1" to 1, "3" to 3, "6" to 6, "10" to 10),
+                    prefs.photoCount
+                ) { prefs.photoCount = it })
 
                 val shutterSet = isShutterSet()
                 if (!shutterSet) {
@@ -379,7 +405,7 @@ class ShutterAccessibilityService : AccessibilityService() {
                     )
                     // Start looks "off" (dim) until the shutter is set
                     addView(pillButton(
-                        "▶ Start", 2.2f,
+                        "▶ Start", 3f,                                  // same width as the shutter button
                         bg = if (shutterSet) ShutterTheme.textPrimary else ShutterTheme.glass,
                         fg = if (shutterSet) ShutterTheme.onAccent else ShutterTheme.textDim
                     ) { startSequence() })
@@ -389,7 +415,7 @@ class ShutterAccessibilityService : AccessibilityService() {
                         bg = if (shutterSet) ShutterTheme.accent else ShutterTheme.glass,
                         fg = if (shutterSet) ShutterTheme.onAccent else ShutterTheme.textPrimary
                     ) { beginCalibration() })
-                    addView(pillButton("✕", 1f, ShutterTheme.glass, ShutterTheme.textPrimary) {
+                    addView(pillButton("✕", 1f, ShutterTheme.glass, ShutterTheme.accent) {
                         ui = Ui.COLLAPSED
                         render()
                     })
