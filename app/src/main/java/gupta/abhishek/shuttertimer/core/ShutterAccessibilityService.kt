@@ -1,7 +1,8 @@
-package gupta.abhishek.shuttertimer.core
+package gupta.abhishek.shuttertimer
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Path
@@ -13,7 +14,6 @@ import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.util.Log
@@ -27,7 +27,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import gupta.abhishek.shuttertimer.ShutterTheme
+import gupta.abhishek.shuttertimer.core.ShutterPrefs
 import kotlin.math.abs
 
 /**
@@ -48,7 +48,7 @@ class ShutterAccessibilityService : AccessibilityService() {
     private companion object {
         const val TAG = "ShutterTimer"          // filter Logcat by this tag
         const val DOT_SIZE_DP = 72              // size of the shutter position circle
-        const val TRANSITION_GRACE_MS = 500L    // ignore stray "other app" events this soon after the camera appears
+        const val HIDE_DELAY_MS = 250L          // wait before hiding so a camera event can cancel it
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -56,7 +56,7 @@ class ShutterAccessibilityService : AccessibilityService() {
     private val prefs by lazy { ShutterPrefs(this) }
     private val cameraPackages = mutableSetOf<String>()
     private var cameraPkg: String? = null
-    private var lastCameraEventAt = 0L
+    private val hideRunnable = Runnable { hide() }   // delayed hide when another app comes to the front
 
     /** Saved shutter position as screen fractions (x, y). Null until the user sets it. */
     private var shutterData: Pair<Float, Float>? = null
@@ -99,30 +99,39 @@ class ShutterAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         loadCameraPackages()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val type = event.eventType
+        val isState = type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        if (!isState && type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName) return
-        Log.d(TAG, "window changed: $pkg")   // shows the real package name of your camera app
+        if (isState) Log.d(TAG, "window changed: $pkg")   // shows the real package name of your camera app
         try {
             when {
-                // Known camera apps, or any package with "camera" in its name (covers most phone makers)
+                // Known camera apps, or any package with "camera" in its name (covers most phone makers).
+                // Android only delivers content events from the window in front, so any camera event
+                // means the camera is on screen: cancel a pending hide and show the panel if hidden.
                 pkg in cameraPackages || pkg.contains("camera", ignoreCase = true) -> {
-                    cameraPkg = pkg
-                    lastCameraEventAt = SystemClock.uptimeMillis()
-                    refreshShutterData()
-                    showControl()                                       // also brings the panel back after returning
+                    handler.removeCallbacks(hideRunnable)
+                    if (pkg != cameraPkg) {
+                        cameraPkg = pkg
+                        refreshShutterData()
+                        render()                                        // no-op while the panel isn't showing
+                    }
+                    showControl()                                       // no-op if already showing
                 }
+                !isState -> Unit                                        // content events of other apps
                 pkg == "com.android.systemui" -> Unit                   // notification shade
                 pkg.contains("inputmethod") || pkg.contains("keyboard") -> Unit
                 else -> {
-                    // Left the camera app. Stray launcher events right after the camera
-                    // appeared are ignored, otherwise the panel vanishes and never returns.
-                    if (SystemClock.uptimeMillis() - lastCameraEventAt > TRANSITION_GRACE_MS) hide()
+                    // Another app came to the front: hide shortly after, unless the camera
+                    // reports in again (stray launcher events while returning to the camera)
+                    handler.removeCallbacks(hideRunnable)
+                    handler.postDelayed(hideRunnable, HIDE_DELAY_MS)
                 }
             }
         } catch (e: Exception) {
@@ -286,6 +295,7 @@ class ShutterAccessibilityService : AccessibilityService() {
     }
 
     private fun hide() {
+        handler.removeCallbacks(hideRunnable)
         stopSequence()
         endCalibration()
         removeShutterDot()
@@ -367,18 +377,18 @@ class ShutterAccessibilityService : AccessibilityService() {
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
                     )
-                    // Yellow once shutter data exists, glass (transparent) while it is null
-                    addView(pillButton(
-                        if (shutterSet) "✓ Shutter set" else "◎ Set shutter", 3f,
-                        bg = if (shutterSet) ShutterTheme.accent else ShutterTheme.glass,
-                        fg = if (shutterSet) ShutterTheme.onAccent else ShutterTheme.textPrimary
-                    ) { beginCalibration() })
                     // Start looks "off" (dim) until the shutter is set
                     addView(pillButton(
                         "▶ Start", 2.2f,
                         bg = if (shutterSet) ShutterTheme.textPrimary else ShutterTheme.glass,
                         fg = if (shutterSet) ShutterTheme.onAccent else ShutterTheme.textDim
                     ) { startSequence() })
+                    // Yellow once shutter data exists, glass (transparent) while it is null
+                    addView(pillButton(
+                        if (shutterSet) "✓ Shutter set" else "◎ Set shutter", 3f,
+                        bg = if (shutterSet) ShutterTheme.accent else ShutterTheme.glass,
+                        fg = if (shutterSet) ShutterTheme.onAccent else ShutterTheme.textPrimary
+                    ) { beginCalibration() })
                     addView(pillButton("✕", 1f, ShutterTheme.glass, ShutterTheme.textPrimary) {
                         ui = Ui.COLLAPSED
                         render()
