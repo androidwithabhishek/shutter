@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">shutter timer</string>
+
+    <string name="shutter_accessibility_description">Shows a timer panel over camera apps and, after the countdown, taps the shutter position you saved to take timed and burst photos. It does not read screen content.</string>
+</resources>
