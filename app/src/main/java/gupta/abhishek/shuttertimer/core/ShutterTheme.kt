@@ -1,7 +1,4 @@
-package gupta.abhishek.shuttertimer.core
-
-
-
+package gupta.abhishek.shuttertimer
 
 /**
  * Every colour used by the app (camera overlay + main screen) lives here.
@@ -16,4 +13,6 @@ object ShutterTheme {
     var textPrimary = 0xFFFFFFFF.toInt()
     var textDim = 0x99FFFFFF.toInt()       // labels and disabled text
     var warning = 0xFFFF9F0A.toInt()       // "set your shutter" reminder
+    var shutterDot = 0x99FFD60A.toInt()        // dull yellow circle on the saved shutter position (panel open)
+    var shutterDotSetting = 0xFFB8960C.toInt() // darker yellow circle while the position is being set
 }

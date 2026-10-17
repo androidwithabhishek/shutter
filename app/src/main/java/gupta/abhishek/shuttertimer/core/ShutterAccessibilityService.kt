@@ -1,8 +1,7 @@
-package gupta.abhishek.shuttertimer
+package gupta.abhishek.shuttertimer.core
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Path
@@ -14,6 +13,7 @@ import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.util.Log
@@ -27,16 +27,16 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import gupta.abhishek.shuttertimer.core.ShutterPrefs
-import gupta.abhishek.shuttertimer.core.ShutterTheme
+import gupta.abhishek.shuttertimer.ShutterTheme
 import kotlin.math.abs
 
 /**
  * Glass timer panel on top of camera apps.
  *
  *  - Collapsed "⏱ Timer" pill (drag it anywhere, tap to open the panel)
- *  - Panel: countdown, gap between photos, number of photos, shutter setup, Start, sound
+ *  - Panel: countdown, gap between photos, number of photos, shutter setup, Start
  *  - Start stays off until the shutter position is set (Set shutter -> tap your shutter once)
+ *  - While the panel is open, a dull-yellow circle marks the saved shutter position
  *  - After the countdown the service taps the saved position, once per photo
  *
  * The service never reads screen content; it only watches which app is in front.
@@ -46,7 +46,9 @@ class ShutterAccessibilityService : AccessibilityService() {
     private enum class Ui { COLLAPSED, EXPANDED, RUNNING }
 
     private companion object {
-        const val TAG = "ShutterTimer"      // filter Logcat by this tag
+        const val TAG = "ShutterTimer"          // filter Logcat by this tag
+        const val DOT_SIZE_DP = 72              // size of the shutter position circle
+        const val TRANSITION_GRACE_MS = 500L    // ignore stray "other app" events this soon after the camera appears
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -54,11 +56,18 @@ class ShutterAccessibilityService : AccessibilityService() {
     private val prefs by lazy { ShutterPrefs(this) }
     private val cameraPackages = mutableSetOf<String>()
     private var cameraPkg: String? = null
+    private var lastCameraEventAt = 0L
+
+    /** Saved shutter position as screen fractions (x, y). Null until the user sets it. */
+    private var shutterData: Pair<Float, Float>? = null
 
     // Control window: the pill / panel
     private var control: LinearLayout? = null
     private var controlParams: WindowManager.LayoutParams? = null
     private var ui = Ui.COLLAPSED
+
+    // Dull-yellow circle on the saved shutter position (touch-through, only while the panel is open)
+    private var shutterDot: View? = null
 
     // Big on-screen countdown (touch-through)
     private var bigView: LinearLayout? = null
@@ -79,13 +88,18 @@ class ShutterAccessibilityService : AccessibilityService() {
 
     private fun orientation() = resources.configuration.orientation
 
-    private fun isShutterSet() = prefs.getShutter(cameraPkg, orientation()) != null
+    /** Reloads the saved position for the current camera app + orientation (null if never set). */
+    private fun refreshShutterData() {
+        shutterData = prefs.getShutter(cameraPkg, orientation())
+    }
+
+    private fun isShutterSet() = shutterData != null
 
     // ---------------------------------------------------------------- lifecycle
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        wm = getSystemService(WINDOW_SERVICE) as WindowManager
         loadCameraPackages()
     }
 
@@ -99,14 +113,20 @@ class ShutterAccessibilityService : AccessibilityService() {
                 // Known camera apps, or any package with "camera" in its name (covers most phone makers)
                 pkg in cameraPackages || pkg.contains("camera", ignoreCase = true) -> {
                     cameraPkg = pkg
-                    showControl()
+                    lastCameraEventAt = SystemClock.uptimeMillis()
+                    refreshShutterData()
+                    showControl()                                       // also brings the panel back after returning
                 }
                 pkg == "com.android.systemui" -> Unit                   // notification shade
                 pkg.contains("inputmethod") || pkg.contains("keyboard") -> Unit
-                else -> hide()                                          // left the camera app
+                else -> {
+                    // Left the camera app. Stray launcher events right after the camera
+                    // appeared are ignored, otherwise the panel vanishes and never returns.
+                    if (SystemClock.uptimeMillis() - lastCameraEventAt > TRANSITION_GRACE_MS) hide()
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Could not show the timer panel", e)             // never crash the service
+            Log.e(TAG, "Could not update the timer panel", e)           // never crash the service
         }
     }
 
@@ -150,6 +170,20 @@ class ShutterAccessibilityService : AccessibilityService() {
         setColor(ShutterTheme.glass)
         cornerRadius = dp(50).toFloat()                  // clamps to a full pill
         setStroke(dp(1), ShutterTheme.glassStroke)
+    }
+
+    /** Circle used to mark the shutter position: translucent fill + solid edge in [color]. */
+    private fun makeRing(color: Int) = View(this).apply {
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(
+                Color.argb(
+                    (Color.alpha(color) * 0.3f).toInt(),
+                    Color.red(color), Color.green(color), Color.blue(color)
+                )
+            )
+            setStroke(dp(3), color)
+        }
     }
 
     /** One option inside a pill. Selected = accent fill. weighted = share the row equally. */
@@ -254,6 +288,7 @@ class ShutterAccessibilityService : AccessibilityService() {
     private fun hide() {
         stopSequence()
         endCalibration()
+        removeShutterDot()
         clearBig()
         control?.let { runCatching { wm.removeView(it) } }
         control = null
@@ -264,6 +299,7 @@ class ShutterAccessibilityService : AccessibilityService() {
     private fun render() {
         val root = control ?: return
         val p = controlParams ?: return
+        refreshShutterData()                       // picks up rotation / a newly saved position
         val (sw, sh) = screenSize()
         val panelW = minOf(sw - dp(32), dp(340))
 
@@ -311,9 +347,9 @@ class ShutterAccessibilityService : AccessibilityService() {
 
                 val shutterSet = isShutterSet()
                 if (!shutterSet) {
-                    // Reminder: Start is off until the shutter position is saved
+                    // No shutter data yet: tell the user to set it (Start stays off)
                     root.addView(TextView(this).apply {
-                        text = "⚠ Set your shutter position first"
+                        text = "⚠ Set the shutter position to turn on Start"
                         textSize = 13f
                         gravity = Gravity.CENTER
                         setTextColor(ShutterTheme.warning)
@@ -325,14 +361,13 @@ class ShutterAccessibilityService : AccessibilityService() {
                     })
                 }
 
-                val soundOn = prefs.soundOn
                 root.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
                     )
-                    // Shutter button turns yellow once its position is saved
+                    // Yellow once shutter data exists, glass (transparent) while it is null
                     addView(pillButton(
                         if (shutterSet) "✓ Shutter set" else "◎ Set shutter", 3f,
                         bg = if (shutterSet) ShutterTheme.accent else ShutterTheme.glass,
@@ -344,11 +379,6 @@ class ShutterAccessibilityService : AccessibilityService() {
                         bg = if (shutterSet) ShutterTheme.textPrimary else ShutterTheme.glass,
                         fg = if (shutterSet) ShutterTheme.onAccent else ShutterTheme.textDim
                     ) { startSequence() })
-                    addView(pillButton(
-                        if (soundOn) "🔔" else "🔕", 1f,
-                        bg = if (soundOn) ShutterTheme.accent else ShutterTheme.glass,
-                        fg = if (soundOn) ShutterTheme.onAccent else ShutterTheme.textPrimary
-                    ) { prefs.soundOn = !soundOn; render() })
                     addView(pillButton("✕", 1f, ShutterTheme.glass, ShutterTheme.textPrimary) {
                         ui = Ui.COLLAPSED
                         render()
@@ -365,6 +395,8 @@ class ShutterAccessibilityService : AccessibilityService() {
         p.x = p.x.coerceIn(0, (sw - root.measuredWidth).coerceAtLeast(0))
         p.y = p.y.coerceIn(0, (sh - root.measuredHeight).coerceAtLeast(0))
         runCatching { wm.updateViewLayout(root, p) }
+
+        updateShutterDot()
     }
 
     /** Drag the control window by [handle]; a tap (no movement) calls [onTap]. Position is saved. */
@@ -407,6 +439,39 @@ class ShutterAccessibilityService : AccessibilityService() {
             }
             true
         }
+    }
+
+    // ---------------------------------------------------------------- shutter position circle
+
+    /** Dull-yellow circle at the saved shutter position, shown only while the panel is open. */
+    private fun updateShutterDot() {
+        removeShutterDot()
+        val pos = shutterData ?: return
+        if (ui != Ui.EXPANDED || calibrationView != null) return
+
+        val (w, h) = screenSize()
+        val size = dp(DOT_SIZE_DP)
+        val dot = makeRing(ShutterTheme.shutterDot)
+        val p = WindowManager.LayoutParams(
+            size, size,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            this.x = (pos.first * w - size / 2).toInt()
+            this.y = (pos.second * h - size / 2).toInt()
+        }
+        wm.addView(dot, p)
+        shutterDot = dot
+    }
+
+    private fun removeShutterDot() {
+        shutterDot?.let { runCatching { wm.removeView(it) } }
+        shutterDot = null
     }
 
     // ---------------------------------------------------------------- big countdown
@@ -461,6 +526,7 @@ class ShutterAccessibilityService : AccessibilityService() {
 
     private fun startSequence() {
         if (running) return
+        refreshShutterData()
         if (!isShutterSet()) {
             toast("Set your shutter position first")
             return
@@ -550,7 +616,8 @@ class ShutterAccessibilityService : AccessibilityService() {
     }
 
     private fun tapShutter(done: (Boolean) -> Unit) {
-        val saved = prefs.getShutter(cameraPkg, orientation())
+        refreshShutterData()
+        val saved = shutterData
         if (saved == null) {
             done(false)
             return
@@ -590,10 +657,18 @@ class ShutterAccessibilityService : AccessibilityService() {
     private fun beginCalibration() {
         if (calibrationView != null) return
         ui = Ui.COLLAPSED
-        render()
+        render()                                           // also removes the dull circle
+
+        // Darker-yellow circle: starts on the saved position (if any) and follows your finger
+        val dotSize = dp(DOT_SIZE_DP)
+        val ring = makeRing(ShutterTheme.shutterDotSetting).apply {
+            layoutParams = FrameLayout.LayoutParams(dotSize, dotSize, Gravity.TOP or Gravity.START)
+            visibility = if (shutterData != null) View.VISIBLE else View.GONE
+        }
 
         val overlay = FrameLayout(this).apply {
             setBackgroundColor(Color.argb(150, 0, 0, 0))
+            addView(ring)
             addView(TextView(this@ShutterAccessibilityService).apply {
                 text = "Tap exactly on your camera's shutter button"
                 textSize = 20f
@@ -606,19 +681,33 @@ class ShutterAccessibilityService : AccessibilityService() {
                     Gravity.CENTER
                 )
             })
-            addView(pillButton("Cancel", 1f, ShutterTheme.glass, ShutterTheme.textPrimary) {
+            addView(pillButton("Cancel", 1f, ShutterTheme.glass, ShutterTheme.accent) {
                 endCalibration()
             }.apply {
                 layoutParams = FrameLayout.LayoutParams(
                     dp(160), dp(44), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                ).apply { bottomMargin = dp(80) }
+                ).apply { bottomMargin = dp(65) }          // lower than before (was 80dp)
             })
+            // Place the circle on the saved position once the overlay has a size
+            post {
+                shutterData?.let {
+                    ring.translationX = it.first * width - dotSize / 2f
+                    ring.translationY = it.second * height - dotSize / 2f
+                }
+            }
             setOnTouchListener { _, e ->
-                if (e.action == MotionEvent.ACTION_UP) {
-                    val (w, h) = screenSize()
-                    prefs.setShutter(cameraPkg, orientation(), e.rawX / w, e.rawY / h)
-                    flashMarker(e.rawX, e.rawY)
-                    endCalibration()
+                when (e.action) {
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                        ring.visibility = View.VISIBLE
+                        ring.translationX = e.x - dotSize / 2f
+                        ring.translationY = e.y - dotSize / 2f
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val (w, h) = screenSize()
+                        prefs.setShutter(cameraPkg, orientation(), e.rawX / w, e.rawY / h)
+                        refreshShutterData()
+                        endCalibration()
+                    }
                 }
                 true
             }
@@ -636,39 +725,12 @@ class ShutterAccessibilityService : AccessibilityService() {
         calibrationView = overlay
     }
 
-    /** Closes the setup overlay and returns to the panel (shutter button is now yellow if saved). */
+    /** Closes the setup overlay and returns to the panel (shutter button is yellow if saved). */
     private fun endCalibration() {
         val v = calibrationView ?: return
         runCatching { wm.removeView(v) }
         calibrationView = null
         ui = Ui.EXPANDED
         render()
-    }
-
-    /** Shows a yellow ring for a moment at the saved point so you can see where it landed. */
-    private fun flashMarker(px: Float, py: Float) {
-        val size = dp(72)
-        val ring = View(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.TRANSPARENT)
-                setStroke(dp(4), ShutterTheme.accent)
-            }
-        }
-        val p = WindowManager.LayoutParams(
-            size, size,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            this.x = (px - size / 2).toInt()
-            this.y = (py - size / 2).toInt()
-        }
-        wm.addView(ring, p)
-        handler.postDelayed({ runCatching { wm.removeView(ring) } }, 1200)
     }
 }
