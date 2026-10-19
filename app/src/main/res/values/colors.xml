@@ -7,4 +7,18 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!-- Shutter Timer theme -->
+    <color name="shutter_accent">#FFFFD60A</color>
+    <color name="shutter_on_accent">#FF1C1C1E</color>
+    <color name="shutter_glass">#B32C2C2E</color>
+    <color name="shutter_glass_stroke">#33FFFFFF</color>
+    <color name="shutter_text_primary">#FFFFFFFF</color>
+    <color name="shutter_text_dim">#99FFFFFF</color>
+    <color name="shutter_divider">#66FFFFFF</color>
+    <color name="shutter_warning">#FFFF9F0A</color>
+    <color name="shutter_dot">#99FFD60A</color>
+    <color name="shutter_dot_setting">#FFB8960C</color>
+    <color name="shutter_status_green">#FF34C759</color>
+    <color name="shutter_status_red">#FFFF3B30</color>
 </resources>

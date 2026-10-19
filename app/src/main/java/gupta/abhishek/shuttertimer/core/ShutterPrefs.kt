@@ -10,7 +10,12 @@ class ShutterPrefs(context: Context) {
     private val sp = context.applicationContext
         .getSharedPreferences("shutter_prefs", Context.MODE_PRIVATE)
 
-    var countdownSec: Int                       // 0 = no countdown
+    /** Timer on/off. Old installs that saved "0 = no countdown" start as off. */
+    var countdownOn: Boolean
+        get() = sp.getBoolean("countdown_on", sp.getInt("countdown", 3) != 0)
+        set(v) = sp.edit().putBoolean("countdown_on", v).apply()
+
+    var countdownSec: Int                       // only used while countdownOn = true
         get() = sp.getInt("countdown", 3).takeIf { it in COUNTDOWNS } ?: 3
         set(v) = sp.edit().putInt("countdown", v).apply()
 
@@ -24,7 +29,7 @@ class ShutterPrefs(context: Context) {
 
     private companion object {
         // Values offered in the UI; a value saved earlier that isn't listed falls back to the default
-        val COUNTDOWNS = setOf(0, 3, 5, 10, 15)
+        val COUNTDOWNS = setOf(3, 5, 10, 15)      // 0 removed, on/off is now countdownOn
         val INTERVALS = setOf(1, 3, 5, 10)
     }
 

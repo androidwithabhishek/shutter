@@ -42,6 +42,8 @@ import kotlin.math.abs
  *
  * The service never reads screen content; it only watches which app is in front.
  */
+
+
 class ShutterAccessibilityService : AccessibilityService() {
 
     private enum class Ui { COLLAPSED, EXPANDED, RUNNING }
@@ -50,6 +52,7 @@ class ShutterAccessibilityService : AccessibilityService() {
         const val TAG = "ShutterTimer"          // filter Logcat by this tag
         const val DOT_SIZE_DP = 72              // size of the shutter position circle
         const val HIDE_DELAY_MS = 250L          // wait before hiding so a camera event can cancel it
+        const val COUNTDOWN_VISIBILITY = 75     // big countdown visibility in %: 100 = solid, lower = fainter
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -361,23 +364,29 @@ class ShutterAccessibilityService : AccessibilityService() {
                 makeDraggable(grabber)
                 root.addView(grabber)
 
-                // Timer row: the (bigger) clock icon means "no countdown"; numbers are seconds
+                // Timer row: tap the clock icon to turn the countdown off / on (on = 3s).
+                // Styled like Gap and Shots: plain icon, only the chosen seconds are yellow.
+                val timerOn = prefs.countdownSec != 0
                 root.addView(optionRow(
-                    cell("⏱", selected = prefs.countdownSec == 0, textSp = 22f) {
-                        prefs.countdownSec = 0
+                    cell(
+                        "⏱",
+                        color = if (timerOn) ShutterTheme.textPrimary else ShutterTheme.textDim,
+                        textSp = 22f
+                    ) {
+                        prefs.countdownSec = if (prefs.countdownSec == 0) 3 else 0
                         render()
                     },
-                    listOf("3S" to 3, "5S" to 5, "10S" to 10, "15S" to 15),
+                    listOf("3s" to 3, "5s" to 5, "10s" to 10, "15s" to 15),
                     prefs.countdownSec
                 ) { prefs.countdownSec = it })
                 root.addView(optionRow(
                     cell("Gap", color = ShutterTheme.textPrimary),
-                    listOf("1S" to 1, "3S" to 3, "5S" to 5, "10S" to 10),
+                    listOf("1s" to 1, "3s" to 3, "5s" to 5, "10s" to 10),
                     prefs.intervalSec
                 ) { prefs.intervalSec = it })
                 root.addView(optionRow(
                     cell("Shots", color = ShutterTheme.textPrimary),
-                    listOf("1" to 1, "3" to 3, "6" to 6, "10" to 10),
+                    listOf("3" to 3, "5" to 5, "10" to 10, "15" to 15),
                     prefs.photoCount
                 ) { prefs.photoCount = it })
 
@@ -523,7 +532,7 @@ class ShutterAccessibilityService : AccessibilityService() {
             }
             val lab = TextView(this).apply {
                 textSize = 22f
-                setTextColor(ShutterTheme.textPrimary)
+                setTextColor(ShutterTheme.accent)             // "Get ready" / "Next photo in": same yellow as the number
                 gravity = Gravity.CENTER
                 setShadowLayer(10f, 0f, 0f, Color.BLACK)
             }
@@ -542,6 +551,7 @@ class ShutterAccessibilityService : AccessibilityService() {
                         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             ).apply { gravity = Gravity.CENTER }
+            box.alpha = COUNTDOWN_VISIBILITY / 100f                                    // faint, so it doesn't cover the camera preview
             wm.addView(box, p)
             bigView = box
             bigNumber = num
